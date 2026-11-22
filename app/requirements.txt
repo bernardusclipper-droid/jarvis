@@ -1,0 +1,9 @@
+faster-whisper>=1.1
+sounddevice
+numpy
+edge-tts
+miniaudio
+flask
+twilio
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*
