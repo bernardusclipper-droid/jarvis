@@ -4,9 +4,13 @@
 - **Kandidaat: FRITZ!Box 6850 LTE/4G** met een simkaart. Bellen via de simkaart (VoLTE) kan sinds FRITZ!OS 7.56.
   Jarvis meldt zich aan als IP-telefoon (SIP) op de box.
   - De box gaat in een vrije poort van de thuisrouter (de pc heeft maar één ethernetpoort, en die is in gebruik).
-  - Eerst checken: ondersteunt de simkaart VoLTE? (Lebara onbevestigd; KPN/Odido/Vodafone wel.)
+  - ✅ VoLTE getest met de eigen Lebara-simkaart: netwerk op 4G, wifi uit, tijdens het gesprek stond er "HD".
   - Kopen met retourrecht. Ongeveer €210 (LTE). Coolblue NL verkoopt hem niet meer; MediaMarkt NL wel.
-- Afgeraden: losse USB-4G-modules (VoLTE onzeker), zakelijke gateways (te duur en te zwaar).
+- Goedkoper: tweedehands FRITZ!Box 6850 LTE (± €100–140, Marktplaats/eBay). Precies de 6850; FRITZ!OS 7.56+.
+- Adapter-optie: Waveshare SIM7600E-H 4G Dongle (Amazon.nl, ± €94). Onzeker of bellen + geluid via USB werkt
+  met Lebara; alleen kopen met retourrecht.
+- Wens gebruiker: 06-nummer, Lebara (Lebara naar Lebara gratis), een adapter/kastje (geen telefoon), mee te nemen.
+- Afgeraden: kale Quectel-modules zonder simsleuf/USB, zakelijke gateways (te duur en te zwaar).
 - Reserve: oude Android-telefoon (Android 8+, 4G-bellen) via Phone Link/Bluetooth.
 
 ## Nog niet gebouwd (wacht op keuze gebruiker)
