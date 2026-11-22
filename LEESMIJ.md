@@ -12,16 +12,11 @@
 4. Op de startpagina van de Console staan je **Account SID** en **Auth Token**. Houd die bij de hand.
 5. Ga naar **Voice → Settings → Geo permissions** en zet **Netherlands** aan.
 
-## Stap 1b – ElevenLabs-stem (optioneel, natuurlijke stem)
-1. Log in op **elevenlabs.io** → **Developers → API Keys → Create API Key**.
-2. Geef de sleutel de rechten **Text to Speech** en **Voices** (lezen).
-3. Plak de sleutel in de installer en kies een stem.
-
-De ElevenLabs-stem wordt gebruikt aan de pc én aan de telefoon.
-- **Gratis account** (10.000 tekens per maand, ongeveer 10–15 minuten spraak): de Nederlandse stemmen uit de bibliotheek zijn waarschijnlijk niet beschikbaar.
-  Jarvis kiest dan automatisch een standaardstem van ElevenLabs die Nederlands spreekt. Die klinkt natuurlijk, maar met een licht accent.
-- **Starter-abonnement (± $5 per maand)**: de echte Nederlandse stemmen (Alexander, Mike, Jan) werken.
-- **Tegoed op?** Dan schakelt Jarvis vanzelf over op de gratis stem en probeert het een uur later opnieuw.
+## Stem
+Jarvis gebruikt **overal dezelfde stem**, aan de pc én aan de telefoon, en wisselt **nooit vanzelf** van stem.
+- Standaard: **Maarten** van Microsoft (gratis). Ook beschikbaar: Fenna (vrouw) en Arnaud (Vlaams).
+- Je kunt ook ElevenLabs kiezen. Dat gebruikt je eigen tegoed.
+- Werkt de stem even niet (geen internet, ElevenLabs-tegoed op), dan probeert Jarvis het 3 keer opnieuw en piept daarna. Hij schakelt nooit over op een andere stem.
 
 ## Stap 2 – Installeren
 1. Dubbelklik **JarvisInstaller.exe**.
@@ -32,6 +27,7 @@ De ElevenLabs-stem wordt gebruikt aan de pc én aan de telefoon.
 
 ## Gebruik
 - **Aan de pc:** zeg *"Jarvis, maak een website over mijn hond"*, of zeg eerst *"Jarvis"* en wacht op *"Ja, meneer?"*.
+  Heb je dubbel klappen aangezet, dan kan het ook met 👏👏.
 - **"Jarvis, bel me"** → je telefoon gaat over.
 - **Lange klussen** (langer dan 2 minuten) → Jarvis belt je als het klaar is.
 - **Aan de telefoon:** zeg wat er moet gebeuren. Is het snel klaar, dan hoor je het antwoord meteen; anders hangt Jarvis op en belt hij terug.
@@ -48,18 +44,22 @@ Projecten komen in `C:\Users\<jij>\JarvisProjecten`.
 | `veilige_modus` | `true` = alleen bestanden maken/wijzigen; `false` = mag ook programma's draaien en installeren |
 | `microfoon_drempel` | hoger zetten (bv. `0.03`) als hij op achtergrondgeluid reageert |
 | `bel_na_minuten` | na hoeveel minuten werk hij je belt |
-| `stem` | gratis reservestem, bv. `nl-BE-ArnaudNeural` |
-| `elevenlabs.voice_id` | andere ElevenLabs-stem |
-| `elevenlabs.api_key` | leegmaken = ElevenLabs uit |
+| `wekwoorden` | lijst met woorden waarop Jarvis reageert, bv. `["friday", "fraidee"]` |
+| `wekgeluid` | `"uit"` of `"dubbel_klappen"` |
+| `klap_drempel` | hoger zetten (bv. `0.5`) als hij op andere geluiden reageert |
+| `stem` | Microsoft-stem: `nl-NL-MaartenNeural`, `nl-NL-FennaNeural`, `nl-BE-ArnaudNeural` |
+| `stem_bron` | `"microsoft"` of `"elevenlabs"` |
+| `twilio.vertrouwde_nummers` | extra nummers die Jarvis mogen bellen, bv. `["0612345678"]` |
+| `twilio.pincode` | pincode die je moet intoetsen als je Jarvis belt (aanrader) |
 
 Problemen? Kijk in `%LOCALAPPDATA%\Jarvis\jarvis.log`.
 
 ## Kosten
-- ElevenLabs: gratis tot 10.000 tekens per maand, daarna de gratis stem.
-- Spraakherkenning, reservestem en tunnel: **gratis** (draait op je eigen pc).
+- ElevenLabs (alleen als je dat kiest): je eigen tegoed.
+- Spraakherkenning, Microsoft-stem en tunnel: **gratis** (draait op je eigen pc).
 - Claude Code: je Pro-abonnement. Let op: zware klussen gebruiken je limiet.
 - Twilio-proefaccount: **gratis** zolang het startkrediet duurt (genoeg voor tientallen gesprekken). Een proefaccount laat eerst een kort Engels zinnetje horen en vraagt je op een toets te drukken; daarna praat Jarvis.
-  Daarna kost het ongeveer $1,15 per maand voor het nummer plus een paar cent per minuut.
+  Daarna kost het ongeveer $1,15 per maand voor het nummer plus kosten per minuut (naar Nederlandse mobiele nummers waarschijnlijk 10–20 cent; controleer twilio.com/voice/pricing).
 
 ## Opnieuw installeren of bijwerken
 Draai de installer gewoon opnieuw: je instellingen blijven bewaard.

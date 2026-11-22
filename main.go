@@ -221,46 +221,62 @@ func configure() {
    Volledige modus: hij mag alles, zonder te vragen. Krachtiger, maar riskanter.`)
 	cfg["veilige_modus"] = !yes(ask("   Volledige modus aanzetten? (j/n) [n]: ", "n"))
 
-	tw := map[string]string{"account_sid": "", "auth_token": "", "twilio_nummer": "", "jouw_nummer": ""}
+	fmt.Println(`
+   👂 WEKWOORD. Standaard: "Jarvis". Je mag ook iets anders kiezen (bv. "Friday" of "hey computer").
+   Tip: een kort, ongewoon woord werkt het best.`)
+	if w := strings.ToLower(ask("   Wekwoord [jarvis]: ", "jarvis")); w != "jarvis" {
+		words := []string{w}
+		fmt.Println("   De spraakherkenning schrijft namen soms anders op. Varianten die ook mogen tellen?")
+		for _, v := range strings.Split(ask("   Varianten, met komma's (Enter = geen): ", ""), ",") {
+			if v = strings.TrimSpace(strings.ToLower(v)); v != "" {
+				words = append(words, v)
+			}
+		}
+		cfg["wekwoorden"] = words
+	}
+	if yes(ask("   Ook wakker worden van twee keer snel klappen? (j/n) [n]: ", "n")) {
+		cfg["wekgeluid"] = "dubbel_klappen"
+	}
+
+	fmt.Println(`
+   🎙️ STEM. Jarvis gebruikt overal (pc én telefoon) dezelfde stem en wisselt nooit vanzelf.
+     1. Maarten  – Microsoft, Nederlandse man (gratis, aanrader)
+     2. Fenna    – Microsoft, Nederlandse vrouw (gratis)
+     3. Arnaud   – Microsoft, Vlaamse man (gratis)
+     4. ElevenLabs – eigen tegoed; is dat op, dan piept Jarvis (geen andere stem)`)
+	el := map[string]string{"api_key": "", "voice_id": "g5MYumTmZlFU9tYSmTp9", "model": "eleven_flash_v2_5"}
+	switch ask("   Keuze [1]: ", "1") {
+	case "2":
+		cfg["stem"] = "nl-NL-FennaNeural"
+	case "3":
+		cfg["stem"] = "nl-BE-ArnaudNeural"
+	case "4":
+		cfg["stem_bron"] = "elevenlabs"
+		el["api_key"] = ask("   ElevenLabs API-sleutel: ", "")
+		el["voice_id"] = ask("   voice_id [g5MYumTmZlFU9tYSmTp9 = Alexander]: ", el["voice_id"])
+	}
+	cfg["elevenlabs"] = el
+
+	tw := map[string]any{"account_sid": "", "auth_token": "", "twilio_nummer": "", "jouw_nummer": "",
+		"vertrouwde_nummers": []string{}, "pincode": ""}
 	fmt.Println(`
    📞 BELLEN (Twilio). Zie LEESMIJ voor hoe je een gratis Twilio-proefaccount maakt.`)
 	if yes(ask("   Twilio nu instellen? (j/n) [j]: ", "j")) {
 		tw["account_sid"] = ask("   Account SID (begint met AC): ", "")
 		tw["auth_token"] = ask("   Auth Token: ", "")
 		tw["twilio_nummer"] = ask("   Je Twilio-telefoonnummer (bv. +12025550123): ", "")
-		tw["jouw_nummer"] = ask("   Jouw mobiele nummer (bv. 0612345678): ", "")
+		tw["jouw_nummer"] = ask("   Jouw mobiele nummer, hierheen belt Jarvis (bv. 0612345678): ", "")
+		extra := []string{}
+		for _, n := range strings.Split(ask("   Andere nummers die Jarvis mogen bellen, met komma's (Enter = geen): ", ""), ",") {
+			if n = strings.TrimSpace(n); n != "" {
+				extra = append(extra, n)
+			}
+		}
+		tw["vertrouwde_nummers"] = extra
+		fmt.Println("   Beller-ID's kun je vervalsen. Met een pincode kan niemand anders Jarvis besturen.")
+		tw["pincode"] = ask("   Pincode bij inkomende gesprekken (cijfers, Enter = geen, aanrader: wel): ", "")
 	}
 	cfg["twilio"] = tw
-
-	el := map[string]string{"api_key": "", "voice_id": "g5MYumTmZlFU9tYSmTp9", "model": "eleven_flash_v2_5", "gebruik": "telefoon"}
-	fmt.Println(`
-   🎙️ NATUURLIJKE STEM (ElevenLabs, optioneel)
-   Sleutel maken: elevenlabs.io → Developers → API Keys → Create
-   (rechten: 'Text to Speech' en 'Voices' lezen). Zonder sleutel gebruikt Jarvis de gratis stem.`)
-	if key := ask("   ElevenLabs API-sleutel (Enter = overslaan): ", ""); key != "" {
-		el["api_key"] = key
-		fmt.Println(`
-   Kies een Nederlandse stem:
-     1. Alexander – warm, kalm, zelfverzekerd (aanrader voor Jarvis)
-     2. Mike Kuyt – rustig, middelbare leeftijd
-     3. Jan       – helder, jong, professioneel
-     4. Ik heb zelf een voice_id`)
-		voices := map[string]string{"1": "g5MYumTmZlFU9tYSmTp9", "2": "YamjLc9M5PjyBsXNP8uV", "3": "bmYU88QsuJdQxYmsCZdc"}
-		c := ask("   Keuze [1]: ", "1")
-		if v, ok := voices[c]; ok {
-			el["voice_id"] = v
-		} else {
-			el["voice_id"] = ask("   voice_id: ", el["voice_id"])
-		}
-		fmt.Println(`
-   Waar gebruikt Jarvis deze stem?
-     1. Alleen aan de telefoon (aanrader: je gratis tegoed gaat veel langer mee)
-     2. Overal, ook aan de pc`)
-		if ask("   Keuze [1]: ", "1") == "2" {
-			el["gebruik"] = "overal"
-		}
-	}
-	cfg["elevenlabs"] = el
 
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 	must(os.WriteFile(cfgPath, data, 0o600))

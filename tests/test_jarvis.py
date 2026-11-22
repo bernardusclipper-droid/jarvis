@@ -81,7 +81,7 @@ def test_config_merge_and_home(jarvis, home):
     assert jarvis.CONFIG_PATH == home / "config.json"
     assert c["aanspreekvorm"] == "baas"
     assert c["twilio"]["jouw_nummer"] == "0612345678" and c["twilio"]["auth_token"] == ""
-    assert c["elevenlabs"]["gebruik"] == "telefoon"  # standaard alleen telefoon
+    assert c["stem_bron"] == "microsoft" and c["wekgeluid"] == "uit"
     assert (home / "w").is_dir()
 
 
@@ -162,44 +162,53 @@ def test_brain_missing_claude(jarvis, home):
 # ------------------------------------------------------------------ stem
 
 
-def test_voice_local_uses_free_voice_by_default(jarvis, home, mp3, monkeypatch):
-    c = cfg_for(jarvis, home)
-    c["elevenlabs"]["api_key"] = "sk"
-    v = jarvis.Voice(c)
-    used = []
-    monkeypatch.setattr(v.eleven, "tts", lambda t: used.append(t) or mp3)
+def test_voice_uses_microsoft_by_default(jarvis, home, mp3, monkeypatch):
+    v = jarvis.Voice(cfg_for(jarvis, home))
+    assert v.eleven is None
 
     async def synth(t):
         return mp3
     monkeypatch.setattr(v, "_synth", synth)
     v.say("**Hallo** meneer")
-    assert used == []  # ElevenLabs niet gebruikt aan de pc
     arr, sr = FAKE_SD.played[-1]
     assert sr == 24000 and arr.dtype == np.int16 and len(arr) > 5000
     assert not v.speaking.is_set()
 
 
-def test_voice_local_eleven_when_overal(jarvis, home, mp3, monkeypatch):
+def test_voice_never_switches_retries_then_beeps(jarvis, home, monkeypatch):
+    monkeypatch.setattr(jarvis.time, "sleep", lambda s: None)
     c = cfg_for(jarvis, home)
-    c["elevenlabs"].update(api_key="sk", gebruik="overal")
+    c["elevenlabs"]["api_key"] = "sk"  # sleutel aanwezig, maar bron = microsoft
     v = jarvis.Voice(c)
-    used = []
-    monkeypatch.setattr(v.eleven, "tts", lambda t: used.append(t) or mp3)
-    v.say("Hallo")
-    assert used == ["Hallo"] and FAKE_SD.played
-
-
-def test_voice_survives_errors(jarvis, home, monkeypatch):
-    v = jarvis.Voice(cfg_for(jarvis, home))
+    tries = []
 
     async def boom(t):
-        raise RuntimeError("geen internet")
+        tries.append(t)
+        raise RuntimeError("Microsoft even weg")
     monkeypatch.setattr(v, "_synth", boom)
-    v.say("hoi")  # mag niet crashen
+    v.say("hoi")
+    assert len(tries) == 3  # 3 pogingen, geen andere stem
+    arr, sr = FAKE_SD.played[-1]  # piepje afgespeeld
+    assert 4000 < len(arr) < 8000
     assert not v.speaking.is_set()
 
 
-# ------------------------------------------------------------------ ElevenLabs (lokale nepserver)
+def test_voice_retry_succeeds(jarvis, home, mp3, monkeypatch):
+    monkeypatch.setattr(jarvis.time, "sleep", lambda s: None)
+    v = jarvis.Voice(cfg_for(jarvis, home))
+    n = []
+
+    async def flaky(t):
+        n.append(1)
+        if len(n) < 2:
+            raise RuntimeError("hik")
+        return mp3
+    monkeypatch.setattr(v, "_synth", flaky)
+    assert v.synth("Hallo") == mp3 and len(n) == 2
+    assert v.synth("Hallo") == mp3 and len(n) == 2  # korte zin uit cache
+
+
+# ------------------------------------------------------------------ ElevenLabs (alleen als gekozen)
 
 
 class ElevenFake(BaseHTTPRequestHandler):
@@ -209,27 +218,18 @@ class ElevenFake(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def _send(self, code, body, ctype="application/json"):
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_GET(self):
-        ElevenFake.seen.append(("GET", self.path, dict(self.headers), None))
-        self._send(200, json.dumps({"voices": [
-            {"voice_id": "F1", "name": "Sarah", "category": "premade", "labels": {"gender": "female"}},
-            {"voice_id": "M1", "name": "Brian", "category": "premade", "labels": {"gender": "male"}},
-        ]}).encode())
-
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        ElevenFake.seen.append(("POST", self.path, dict(self.headers), body))
+        ElevenFake.seen.append((self.path, {k.lower(): v for k, v in self.headers.items()}, body))
         if ElevenFake.mode == "quota":
-            return self._send(401, b'{"detail":{"status":"quota_exceeded","message":"You exceeded your quota"}}')
-        if ElevenFake.mode == "library" and "/LIB" in self.path:
-            return self._send(402, b'{"detail":{"status":"payment_required","message":"Free users cannot use library voices via the API"}}')
-        self._send(200, b"MP3DATA", "audio/mpeg")
+            self.send_response(401)
+            self.end_headers()
+            self.wfile.write(b'{"detail":{"status":"quota_exceeded"}}')
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/mpeg")
+        self.end_headers()
+        self.wfile.write(b"MP3DATA")
 
 
 @pytest.fixture
@@ -238,49 +238,35 @@ def eleven_srv(jarvis, monkeypatch):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     monkeypatch.setattr(jarvis.ElevenLabs, "API", f"http://127.0.0.1:{srv.server_port}/v1")
     ElevenFake.seen.clear()
+    ElevenFake.mode = "ok"
     yield ElevenFake
     srv.shutdown()
 
 
-def test_eleven_request_format(jarvis, home, eleven_srv):
-    c = cfg_for(jarvis, home)
+def test_eleven_when_chosen(jarvis, home, eleven_srv):
+    c = cfg_for(jarvis, home, stem_bron="elevenlabs")
     c["elevenlabs"].update(api_key="sk_abc", voice_id="V1")
-    e = jarvis.ElevenLabs(c)
-    eleven_srv.mode = "ok"
-    assert e.tts("Goedendag") == b"MP3DATA"
-    m, path, headers, body = eleven_srv.seen[-1]
-    assert m == "POST" and path == "/v1/text-to-speech/V1?output_format=mp3_44100_128"
-    assert {k.lower(): v for k, v in headers.items()}["xi-api-key"] == "sk_abc"
+    v = jarvis.Voice(c)
+    assert v.synth("Goedendag") == b"MP3DATA"
+    path, headers, body = eleven_srv.seen[-1]
+    assert path == "/v1/text-to-speech/V1?output_format=mp3_44100_128"
+    assert headers["xi-api-key"] == "sk_abc"
     assert body == {"text": "Goedendag", "model_id": "eleven_flash_v2_5", "language_code": "nl"}
-    e.tts("Goedendag")  # korte zinnen uit cache
-    assert len(eleven_srv.seen) == 1
 
 
-def test_eleven_library_voice_falls_back_to_premade_male(jarvis, home, eleven_srv):
-    c = cfg_for(jarvis, home)
-    c["elevenlabs"].update(api_key="sk", voice_id="LIB")
-    e = jarvis.ElevenLabs(c)
-    eleven_srv.mode = "library"
-    assert e.tts("Hallo") == b"MP3DATA"
-    assert e.voice_id == "M1"
-
-
-def test_eleven_quota_pauses_and_falls_back(jarvis, home, eleven_srv):
-    c = cfg_for(jarvis, home)
-    c["elevenlabs"].update(api_key="sk")
-    e = jarvis.ElevenLabs(c)
-    eleven_srv.mode = "quota"
-    assert e.tts("Hallo") is None and not e.enabled
-    n = len(eleven_srv.seen)
-    assert e.tts("Nog iets") is None and len(eleven_srv.seen) == n  # geen nieuwe pogingen
-
-
-def test_eleven_off_without_key_and_unreachable(jarvis, home, monkeypatch):
-    c = cfg_for(jarvis, home)
-    assert jarvis.ElevenLabs(c).tts("x") is None
+def test_eleven_quota_does_not_switch_voice(jarvis, home, eleven_srv, monkeypatch):
+    monkeypatch.setattr(jarvis.time, "sleep", lambda s: None)
+    c = cfg_for(jarvis, home, stem_bron="elevenlabs")
     c["elevenlabs"]["api_key"] = "sk"
-    monkeypatch.setattr(jarvis.ElevenLabs, "API", "http://127.0.0.1:9/v1")
-    assert jarvis.ElevenLabs(c).tts("x") is None
+    v = jarvis.Voice(c)
+    used_ms = []
+
+    async def ms(t):
+        used_ms.append(t)
+        return b"x"
+    monkeypatch.setattr(v, "_synth", ms)
+    eleven_srv.mode = "quota"
+    assert v.synth("Hallo") is None and used_ms == []  # geen Microsoft-stem als noodgreep
 
 
 # ------------------------------------------------------------------ oren (microfoon-logica)
@@ -296,8 +282,8 @@ class FakeVoice:
         self.said.append(text)
 
 
-def make_ears(jarvis, home, texts):
-    c = cfg_for(jarvis, home)
+def make_ears(jarvis, home, texts, **extra):
+    c = cfg_for(jarvis, home, **extra)
     cmds = []
     jarvis.Ears._load_model = lambda self: None
     voice = FakeVoice()
@@ -366,6 +352,53 @@ def test_ears_mute_while_speaking(jarvis, home):
     assert ears.q.qsize() == 1
 
 
+def test_custom_wake_words(jarvis, home):
+    ears, voice, cmds, _ = make_ears(jarvis, home, ["Hey Friday, zet de lampen aan", "Jarvis, doe iets"],
+                                     wekwoorden=["hey friday", "friday"])
+    speech(ears, 1.5); speech(ears, 1.0, False)
+    speech(ears, 1.5); speech(ears, 1.0, False)
+    assert cmds == ["zet de lampen aan"]  # 'Jarvis' werkt dan niet meer
+    assert ears.wake_name == "Hey Friday"
+
+
+def clap(ears, ms=60, peak=0.9):
+    for _ in range(ms // 30):
+        b = np.zeros(480, np.float32); b[100] = peak; b[101] = -peak
+        ears.feed(b)
+
+
+def quiet(ears, s):
+    for _ in range(int(s / 0.03)):
+        ears.feed(np.zeros(480, np.float32))
+
+
+def test_double_clap_wakes(jarvis, home):
+    ears, voice, cmds, _ = make_ears(jarvis, home, ["Hoe laat is het?"], wekgeluid="dubbel_klappen")
+    quiet(ears, 0.5); clap(ears); quiet(ears, 0.3); clap(ears); quiet(ears, 1.0)
+    assert voice.said == ["Ja, meneer?"]
+    speech(ears, 1.2); speech(ears, 1.0, False)
+    assert cmds == ["Hoe laat is het?"]
+
+
+def test_single_clap_or_slow_claps_do_nothing(jarvis, home):
+    ears, voice, _, _ = make_ears(jarvis, home, [], wekgeluid="dubbel_klappen")
+    clap(ears); quiet(ears, 2.0)
+    clap(ears); quiet(ears, 1.5); clap(ears); quiet(ears, 1.0)  # te ver uit elkaar
+    assert voice.said == []
+
+
+def test_long_loud_noise_is_not_a_clap(jarvis, home):
+    ears, voice, _, heard = make_ears(jarvis, home, ["muziek"], wekgeluid="dubbel_klappen")
+    clap(ears, ms=600); quiet(ears, 0.3); clap(ears, ms=600); quiet(ears, 1.0)
+    assert voice.said == []
+
+
+def test_claps_off_by_default(jarvis, home):
+    ears, voice, _, _ = make_ears(jarvis, home, [])
+    clap(ears); quiet(ears, 0.3); clap(ears); quiet(ears, 1.0)
+    assert voice.said == []
+
+
 # ------------------------------------------------------------------ telefoon
 
 
@@ -391,10 +424,10 @@ class FakeBrain:
 def phone(jarvis, home, mp3):
     from twilio.request_validator import RequestValidator
 
-    c = cfg_for(jarvis, home, twilio=dict(TWILIO))
-    c["elevenlabs"]["api_key"] = "sk"
+    c = cfg_for(jarvis, home, twilio=dict(TWILIO, vertrouwde_nummers=["+31 6 9876 5432"]))
     voice = jarvis.Voice(c)
-    voice.eleven.tts = lambda t: mp3
+    voice.spoken = []
+    voice.synth = lambda t: (voice.spoken.append(t), mp3)[1]
     ph = jarvis.Phone(c, FakeBrain(), voice)
     ph.base = "https://abc.trycloudflare.com"
     ph.calls = []
@@ -424,7 +457,7 @@ def test_phone_security(phone):
     assert code == 200 and "<Gather" in xml and 'language="nl-NL"' in xml
 
 
-def test_phone_plays_elevenlabs_audio(phone, mp3):
+def test_phone_plays_same_voice_audio(phone, mp3):
     _, xml = phone.post("/voice/in")
     plays = urls(xml, "Play")
     assert plays and "<Say" not in xml
@@ -434,49 +467,63 @@ def test_phone_plays_elevenlabs_audio(phone, mp3):
     assert phone.client.get("/audio/onbekend.mp3").status_code == 404
 
 
-def test_phone_falls_back_to_polly(phone):
-    phone.voice.eleven.tts = lambda t: None
+def test_phone_never_uses_other_voice(phone):
+    phone.voice.synth = lambda t: None
     _, xml = phone.post("/voice/in")
-    assert 'voice="Polly.Ruben"' in xml and "Waarmee kan ik helpen" in xml
+    assert "<Say" not in xml and "/audio/piep.wav" in xml
+    r = phone.client.get("/audio/piep.wav")
+    assert r.status_code == 200 and r.data[:4] == b"RIFF"
+
+
+def test_trusted_extra_number(phone):
+    assert phone.post("/voice/in", From="+31698765432")[0] == 200
+    assert phone.post("/voice/in", From="+31600000000")[0] == 403
+
+
+def test_pin_code(phone):
+    phone.pin = "4321"
+    _, xml = phone.post("/voice/in")
+    assert "<Gather" in xml and 'numDigits="4"' in xml and "/voice/pin" in xml
+    _, xml = phone.post("/voice/pin", Digits="1111")
+    assert "<Hangup" in xml and "/voice/heard" not in xml
+    _, xml = phone.post("/voice/pin", Digits="4321")
+    assert "/voice/heard" in xml
 
 
 def test_phone_quick_task_answered_in_call(phone):
-    phone.voice.eleven.tts = lambda t: None
     _, xml = phone.post("/voice/heard", SpeechResult="snel 0.1")
     wait = urls(xml, "Redirect")[0].replace(phone.base, "")
     time.sleep(0.4)
     _, xml = phone.post(wait)
-    assert "Klaar met snel 0.1. Zie een link" in xml and "Kan ik nog iets" in xml
+    said = " | ".join(phone.voice.spoken)
+    assert "Klaar met snel 0.1. Zie een link" in said and "Kan ik nog iets" in said and "<Gather" in xml
     assert phone.calls == []
 
 
 def test_phone_wait_loop_then_callback(phone):
-    phone.voice.eleven.tts = lambda t: None
     _, xml = phone.post("/voice/heard", SpeechResult="lang 1")
     wait = urls(xml, "Redirect")[0].replace(phone.base, "")
     _, xml = phone.post(wait)
     assert "<Pause" in xml and "n=1" in urls(xml, "Redirect")[0]
     _, xml = phone.post(wait.replace("n=0", "n=8"))
-    assert "ik bel u terug" in xml.lower() and "<Hangup" in xml
+    assert "ik bel u terug" in phone.voice.spoken[-1].lower() and "<Hangup" in xml
     time.sleep(1.4)
     assert len(phone.calls) == 1 and phone.calls[0].startswith("/voice/result?job=")
     _, xml = phone.post(phone.calls[0], From="+12025550123", To="+31612345678")  # uitgaand gesprek
-    assert "Jarvis hier" in xml and "Klaar met lang 1" in xml and "<Gather" in xml
+    assert "Jarvis hier" in phone.voice.spoken[-3] and "Klaar met lang 1" in phone.voice.spoken[-3] and "<Gather" in xml
 
 
 def test_phone_goodbye_and_silence(phone):
-    phone.voice.eleven.tts = lambda t: None
     for s in ("Nee dank je, doei", ""):
         _, xml = phone.post("/voice/heard", SpeechResult=s)
-        assert "Tot uw dienst" in xml and "<Hangup" in xml
+        assert "Tot uw dienst" in phone.voice.spoken[-1] and "<Hangup" in xml
 
 
 def test_phone_notify_message(phone):
-    phone.voice.eleven.tts = lambda t: None
     phone.notify("De **website** is klaar.")
     path = phone.calls[0]
     _, xml = phone.post(path, From="+12025550123", To="+31612345678")
-    assert "De website is klaar." in xml
+    assert "De website is klaar." in phone.voice.spoken[-3]
 
 
 def test_phone_start_tunnel_and_number_hookup(jarvis, home, monkeypatch):

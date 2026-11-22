@@ -46,6 +46,10 @@ DEFAULT_CONFIG = {
     "gpu_index": 0,
     "whisper_model": "large-v3-turbo",
     "stem": "nl-NL-MaartenNeural",
+    "stem_bron": "microsoft",  # "microsoft" (gratis) of "elevenlabs"; nooit automatisch wisselen
+    "wekwoorden": ["jarvis", "jervis", "jarvies", "javis", "jarviz", "jarves", "jaarvis"],
+    "wekgeluid": "uit",  # "uit" of "dubbel_klappen"
+    "klap_drempel": 0.35,
     "werkmap": "%USERPROFILE%\\JarvisProjecten",
     "veilige_modus": True,
     "lokaal_luisteren": True,
@@ -56,13 +60,14 @@ DEFAULT_CONFIG = {
         "api_key": "",
         "voice_id": "g5MYumTmZlFU9tYSmTp9",
         "model": "eleven_flash_v2_5",
-        "gebruik": "telefoon",  # "telefoon" (spaart tegoed) of "overal"
     },
     "twilio": {
         "account_sid": "",
         "auth_token": "",
         "twilio_nummer": "",
         "jouw_nummer": "",
+        "vertrouwde_nummers": [],  # extra nummers die Jarvis mogen bellen
+        "pincode": "",  # aanrader: pincode bij inkomende gesprekken
     },
 }
 
@@ -196,11 +201,10 @@ class Brain:
 
 
 # --------------------------------------------------------------------------
-# Stem (tekst naar spraak) via edge-tts
+# Stem: overal (pc en telefoon) precies dezelfde stem, nooit automatisch wisselen.
 # --------------------------------------------------------------------------
 class ElevenLabs:
-    """Natuurlijke stem via ElevenLabs. Geeft None terug als het niet lukt
-    (geen sleutel, tegoed op, ...), dan valt Jarvis terug op de gratis stem."""
+    """Alleen gebruikt als "stem_bron" op "elevenlabs" staat."""
     API = "https://api.elevenlabs.io/v1"
 
     def __init__(self, cfg):
@@ -208,79 +212,69 @@ class ElevenLabs:
         self.key = (e.get("api_key") or "").strip()
         self.voice_id = e.get("voice_id") or DEFAULT_CONFIG["elevenlabs"]["voice_id"]
         self.model = e.get("model") or "eleven_flash_v2_5"
-        self.paused_until = 0.0
-        self.switched = False
-        self.cache = {}
-        if self.key:
-            log.info("🎙️ ElevenLabs-stem actief")
-
-    @property
-    def enabled(self):
-        return bool(self.key) and time.time() > self.paused_until
-
-    def _req(self, path, body=None):
-        req = urllib.request.Request(
-            self.API + path,
-            data=json.dumps(body).encode() if body is not None else None,
-            headers={"xi-api-key": self.key, "Content-Type": "application/json"},
-            method="POST" if body is not None else "GET",
-        )
-        with urllib.request.urlopen(req, timeout=20) as r:
-            return r.read()
-
-    def _fallback_voice(self):
-        """Gratis accounts mogen geen bibliotheekstemmen via de API gebruiken:
-        kies dan automatisch een standaardstem van het account."""
-        try:
-            voices = json.loads(self._req("/voices")).get("voices", [])
-            pre = [v for v in voices if v.get("category") == "premade"]
-            male = [v for v in pre if (v.get("labels") or {}).get("gender") == "male"]
-            pick = (male or pre or voices)[0]
-            self.voice_id = pick["voice_id"]
-            log.info("🎙️ Overgestapt op ElevenLabs-stem '%s'", pick.get("name"))
-            return True
-        except Exception as e:
-            log.warning("Geen andere ElevenLabs-stem gevonden: %s", e)
-            return False
 
     def tts(self, text):
-        if not self.enabled:
-            return None
-        if text in self.cache:
-            return self.cache[text]
+        req = urllib.request.Request(
+            f"{self.API}/text-to-speech/{self.voice_id}?output_format=mp3_44100_128",
+            data=json.dumps({"text": text, "model_id": self.model, "language_code": "nl"}).encode(),
+            headers={"xi-api-key": self.key, "Content-Type": "application/json"},
+            method="POST",
+        )
         try:
-            audio = self._req(
-                f"/text-to-speech/{self.voice_id}?output_format=mp3_44100_128",
-                {"text": text, "model_id": self.model, "language_code": "nl"},
-            )
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return r.read()
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", "replace")
-            low = body.lower()
-            if "quota" in low or "credits" in low or e.code in (401, 429):
-                self.paused_until = time.time() + 3600
-                log.warning("ElevenLabs-tegoed op of geweigerd (%s). Ik gebruik een uur de gratis stem.", e.code)
-            elif not self.switched and "voice" in low:
-                self.switched = True
-                if self._fallback_voice():
-                    return self.tts(text)
-            else:
-                log.warning("ElevenLabs-fout %s: %s", e.code, body[:200])
-            return None
-        except Exception as e:
-            log.warning("ElevenLabs niet bereikbaar: %s", e)
-            return None
-        if len(text) < 80:
-            self.cache[text] = audio
-        return audio
+            raise RuntimeError(f"ElevenLabs {e.code}: {body[:200]}") from None
+
+
+def beep_wav(freq=880, seconds=0.25, sr=8000):
+    """Kort piepje (wav) als de stem even niet beschikbaar is."""
+    import io
+    import math
+    import struct
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(b"".join(struct.pack("<h", int(9000 * math.sin(2 * math.pi * freq * i / sr)))
+                               for i in range(int(seconds * sr))))
+    return buf.getvalue()
 
 
 class Voice:
+    RETRIES = 3
+
     def __init__(self, cfg):
-        self.eleven = ElevenLabs(cfg)
-        self.eleven_local = (cfg.get("elevenlabs") or {}).get("gebruik") == "overal"
+        self.bron = cfg.get("stem_bron", "microsoft")
         self.voice = cfg["stem"]
+        self.eleven = ElevenLabs(cfg) if self.bron == "elevenlabs" else None
         self.lock = threading.Lock()
         self.speaking = threading.Event()
+        self.cache = {}
+        log.info("🎙️ Stem: %s", self.voice if not self.eleven else "ElevenLabs " + self.eleven.voice_id)
+
+    def synth(self, text):
+        """Geeft mp3 terug in de gekozen stem, of None als het echt niet lukt.
+        Er wordt NOOIT overgeschakeld op een andere stem."""
+        if text in self.cache:
+            return self.cache[text]
+        for attempt in range(1, self.RETRIES + 1):
+            try:
+                audio = self.eleven.tts(text) if self.eleven else asyncio.run(self._synth(text))
+                if not audio:
+                    raise RuntimeError("lege audio")
+                if len(text) < 80:
+                    self.cache[text] = audio
+                return audio
+            except Exception as e:
+                log.warning("Stem mislukt (poging %d/%d): %s", attempt, self.RETRIES, e)
+                time.sleep(0.5 * attempt)
+        log.error("❗ De stem werkt nu niet. Ik piep in plaats van te praten (geen andere stem).")
+        return None
 
     def say(self, text):
         text = spoken(text)
@@ -291,9 +285,13 @@ class Voice:
             import sounddevice as sd
 
             with self.lock:
-                audio = (self.eleven.tts(text) if self.eleven_local else None) or asyncio.run(self._synth(text))
-                dec = miniaudio.decode(audio, output_format=miniaudio.SampleFormat.SIGNED16,
-                                       nchannels=1, sample_rate=24000)  # mp3 van beide stemmen
+                audio = self.synth(text)
+                if audio:
+                    dec = miniaudio.decode(audio, output_format=miniaudio.SampleFormat.SIGNED16,
+                                           nchannels=1, sample_rate=24000)
+                else:
+                    dec = miniaudio.decode(beep_wav(), output_format=miniaudio.SampleFormat.SIGNED16,
+                                           nchannels=1, sample_rate=24000)
                 arr = np.frombuffer(dec.samples, dtype=np.int16)
                 self.speaking.set()
                 try:
@@ -303,7 +301,7 @@ class Voice:
                 finally:
                     self.speaking.clear()
         except Exception as e:
-            log.error("Spraak mislukt: %s", e)
+            log.error("Afspelen mislukt: %s", e)
 
     async def _synth(self, text):
         import edge_tts
@@ -318,7 +316,13 @@ class Voice:
 # --------------------------------------------------------------------------
 # Oren (microfoon + Whisper op de GPU)
 # --------------------------------------------------------------------------
-WAKE = re.compile(r"\b(jarvis|jervis|jarvies|javis|jarviz|jarves|jaarvis)\b[\s,.!?]*", re.I)
+def build_wake(words):
+    """Regex voor de wekwoorden uit de instellingen (meerdere woorden mag, bv. 'hey computer')."""
+    alts = "|".join(r"\s+".join(map(re.escape, w.split())) for w in words if w.strip())
+    return re.compile(rf"\b({alts})\b[\s,.!?]*", re.I)
+
+
+WAKE = build_wake(DEFAULT_CONFIG["wekwoorden"])
 
 
 def setup_cuda(gpu_index):
@@ -346,6 +350,10 @@ class Ears:
         self.on_command = on_command
         self.q = queue.Queue()
         self.awaiting_until = 0.0
+        self.wake = build_wake(cfg.get("wekwoorden") or DEFAULT_CONFIG["wekwoorden"])
+        self.wake_name = (cfg.get("wekwoorden") or ["Jarvis"])[0].strip().title()
+        self.clap_mode = cfg.get("wekgeluid") == "dubbel_klappen"
+        self._n, self._clap_start, self._last_clap = 0, None, None
         self.model = self._load_model()
 
     def _load_model(self):
@@ -364,7 +372,7 @@ class Ears:
             self.q.put(indata[:, 0].copy())
 
     def transcribe(self, audio):
-        segs, _ = self.model.transcribe(audio, language="nl", beam_size=1, initial_prompt="Jarvis,")
+        segs, _ = self.model.transcribe(audio, language="nl", beam_size=1, initial_prompt=f"{self.wake_name},")
         return " ".join(s.text for s in segs).strip()
 
     def loop(self):
@@ -372,28 +380,58 @@ class Ears:
 
         with sd.InputStream(samplerate=self.SR, channels=1, dtype="float32",
                             blocksize=self.BLOCK, callback=self._callback):
-            log.info("👂 Ik luister. Zeg: 'Jarvis, ...'")
+            log.info("👂 Ik luister. Zeg: '%s, ...'%s", self.wake_name,
+                     " of klap twee keer" if self.clap_mode else "")
             while True:
                 self.feed(self.q.get())
 
-    _pre, _rec, _silent, _active = [], [], 0, False
+    _pre, _rec, _silent, _active, _loud_n = [], [], 0, False, 0
 
     def feed(self, block):
         """Verwerk 30 ms microfoongeluid; knipt zinnen af op stiltes."""
         import numpy as np
 
+        self._n += 1
+        if self.clap_mode:
+            self._clap(float(np.max(np.abs(block))))
         loud = float(np.sqrt(np.mean(block ** 2))) > float(self.cfg["microfoon_drempel"])
         if not self._active:
             self._pre = (self._pre + [block])[-10:]
             if loud:
-                self._active, self._rec, self._silent = True, list(self._pre), 0
+                self._active, self._rec, self._silent, self._loud_n = True, list(self._pre), 0, 1
             return
         self._rec.append(block)
         self._silent = 0 if loud else self._silent + 1
+        self._loud_n += loud
         if self._silent > 27 or len(self._rec) > 1000:  # ~0.8 s stilte of 30 s max
             self._active = False
-            if len(self._rec) - self._silent >= 10:
+            if self._loud_n >= 8:  # minstens ~0,25 s geluid: tikken en klappen negeren
                 self._handle(np.concatenate(self._rec))
+
+    def _clap(self, peak):
+        """Twee korte, harde klappen binnen ~1 seconde = wakker worden.
+        Langdurig geluid (praten, muziek) telt niet als klap."""
+        thr = float(self.cfg.get("klap_drempel", 0.35))
+        if peak >= thr:
+            if self._clap_start is None:
+                self._clap_start = self._n
+            return
+        if self._clap_start is None or peak > thr / 3:
+            return
+        length, self._clap_start = self._n - self._clap_start, None
+        if length > 4:  # langer dan ~120 ms: geen klap
+            self._last_clap = None
+            return
+        if self._last_clap is not None and 5 <= self._n - self._last_clap <= 33:
+            self._last_clap = None
+            log.info("👏👏 Dubbele klap")
+            self._wake_up()
+        else:
+            self._last_clap = self._n
+
+    def _wake_up(self):
+        self.voice.say(f"Ja, {self.cfg['aanspreekvorm']}?")
+        self.awaiting_until = time.time() + 8
 
     def _handle(self, audio):
         if self.voice.speaking.is_set():
@@ -406,14 +444,13 @@ class Ears:
             log.info("🎤 %s", text)
             self.on_command(text)
             return
-        m = WAKE.search(text)
+        m = self.wake.search(text)
         if not m:
             return
         cmd = text[m.end():].strip()
         log.info("🎤 %s", text)
         if len(cmd) < 3:
-            self.voice.say(f"Ja, {self.cfg['aanspreekvorm']}?")
-            self.awaiting_until = time.time() + 8
+            self._wake_up()
         else:
             self.on_command(cmd)
 
@@ -431,8 +468,6 @@ def norm_nr(n):
 
 
 class Phone:
-    TTS = {"voice": "Polly.Ruben", "language": "nl-NL"}
-
     def __init__(self, cfg, brain, voice):
         from twilio.request_validator import RequestValidator
         from twilio.rest import Client
@@ -445,6 +480,8 @@ class Phone:
         self.validator = RequestValidator(t["auth_token"])
         self.from_nr = norm_nr(t["twilio_nummer"])
         self.to_nr = norm_nr(t["jouw_nummer"])
+        self.trusted = {self.to_nr} | {norm_nr(n) for n in t.get("vertrouwde_nummers") or [] if n}
+        self.pin = re.sub(r"\D", "", str(t.get("pincode") or ""))
         self.base = None
         self.jobs = {}
         self.msgs = {}
@@ -534,7 +571,8 @@ class Phone:
             return ph.base + p
 
         def speak(node, text):
-            data = ph.voice.eleven.tts(text) if ph.voice else None
+            # Zelfde stem als aan de pc. Lukt die niet: piepje, nooit een andere stem.
+            data = ph.voice.synth(text) if ph.voice else None
             if data:
                 aid = uuid.uuid4().hex
                 ph.audio[aid] = data
@@ -542,7 +580,7 @@ class Phone:
                     ph.audio.pop(next(iter(ph.audio)))
                 node.play(url(f"/audio/{aid}.mp3"))
             else:
-                node.say(text, **ph.TTS)
+                node.play(url("/audio/piep.wav"))
 
         def twiml(r):
             return Response(str(r), mimetype="text/xml")
@@ -554,6 +592,10 @@ class Phone:
             speak(r, f"Ik hoor niets meer. Tot uw dienst, {naam}.")
             r.hangup()
             return r
+
+        @app.get("/audio/piep.wav")
+        def piep():
+            return Response(beep_wav(), mimetype="audio/wav")
 
         @app.get("/audio/<aid>.mp3")
         def audio(aid):
@@ -573,15 +615,32 @@ class Phone:
             if not ph.validator.validate(full, request.form.to_dict(), sig):
                 log.warning("Geweigerd verzoek (ongeldige handtekening)")
                 abort(403)
-            caller = request.form.get("From", "")
-            called = request.form.get("To", "")
-            if ph.to_nr not in (norm_nr(caller), norm_nr(called)):
+            caller = norm_nr(request.form.get("From", ""))
+            called = norm_nr(request.form.get("To", ""))
+            if caller not in ph.trusted and called not in ph.trusted:
                 log.warning("Geweigerd: onbekend nummer %s", caller)
                 abort(403)
 
         @app.post("/voice/in")
         def incoming():
-            return twiml(ask(VoiceResponse(), f"Goedendag {naam}. Waarmee kan ik helpen?"))
+            r = VoiceResponse()
+            if ph.pin:  # nummers kun je vervalsen; een pincode niet
+                g = r.gather(input="dtmf", num_digits=len(ph.pin), timeout=10,
+                             action=url("/voice/pin"), method="POST")
+                speak(g, "Jarvis hier. Toets uw pincode.")
+                r.hangup()
+                return twiml(r)
+            return twiml(ask(r, f"Goedendag {naam}. Waarmee kan ik helpen?"))
+
+        @app.post("/voice/pin")
+        def pin():
+            r = VoiceResponse()
+            if request.form.get("Digits", "") != ph.pin:
+                log.warning("Verkeerde pincode van %s", request.form.get("From"))
+                speak(r, "Onjuiste code.")
+                r.hangup()
+                return twiml(r)
+            return twiml(ask(r, f"Goedendag {naam}. Waarmee kan ik helpen?"))
 
         @app.post("/voice/heard")
         def heard():
