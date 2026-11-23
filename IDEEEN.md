@@ -7,9 +7,13 @@
   - ✅ VoLTE getest met de eigen Lebara-simkaart: netwerk op 4G, wifi uit, tijdens het gesprek stond er "HD".
   - Kopen met retourrecht. Ongeveer €210 (LTE). Coolblue NL verkoopt hem niet meer; MediaMarkt NL wel.
 - Goedkoper: tweedehands FRITZ!Box 6850 LTE (± €100–140, Marktplaats/eBay). Precies de 6850; FRITZ!OS 7.56+.
-- Adapter-optie: Waveshare SIM7600E-H 4G Dongle (Amazon.nl, ± €94). Onzeker of bellen + geluid via USB werkt
+- **Voorkeur adapter: Waveshare SIM7600G-H 4G HAT** (Tinytronics, € 77, NL-winkel, 14 dagen bedenktijd).
+  Werkt via USB op een Windows-pc, bellen via AT-commando's, en heeft een 3,5 mm audio-aansluiting
+  als reserve als het geluid via USB niet lukt (dan een USB-geluidskaart van ± € 5-10 erbij). Kale print: doosje nodig.
+- Alternatief: Waveshare SIM7600E-H 4G Dongle (Amazon.nl, ± €94). Onzeker of bellen + geluid via USB werkt
   met Lebara; alleen kopen met retourrecht.
 - Wens gebruiker: 06-nummer, Lebara (Lebara naar Lebara gratis), een adapter/kastje (geen telefoon), mee te nemen.
+- Getest en afgevallen: FRITZ!Box 7490 (DSL, geen simsleuf), simkaartlezers, lege Mini PCIe-adapters.
 - Afgeraden: kale Quectel-modules zonder simsleuf/USB, zakelijke gateways (te duur en te zwaar).
 - Reserve: oude Android-telefoon (Android 8+, 4G-bellen) via Phone Link/Bluetooth.
 
