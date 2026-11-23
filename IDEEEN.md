@@ -17,6 +17,10 @@
 - Afgeraden: kale Quectel-modules zonder simsleuf/USB, zakelijke gateways (te duur en te zwaar).
 - Reserve: oude Android-telefoon (Android 8+, 4G-bellen) via Phone Link/Bluetooth.
 
+## Twilio (alleen om te testen)
+- Proefaccount: 30 dagen, ± 75 belminuten (Twilio-documentatie, november 2026).
+- Naar een NL-mobiel nummer: ± $ 0,28/min vanaf een niet-EER-nummer, ± $ 0,02/min vanaf een EER-nummer.
+
 ## Nog niet gebouwd (wacht op keuze gebruiker)
 - Terugbellen voor toestemming, samenvattingen en fouten. Voorstel: alleen bij riskante acties bellen,
   eerst hardop vragen als de gebruiker aan de pc zit, geen antwoord = nee, belgrens, dagelijkse samenvatting.

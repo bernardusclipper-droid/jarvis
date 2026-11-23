@@ -6,7 +6,7 @@
 - (Voor bellen) een gratis Twilio-proefaccount – zie hieronder
 
 ## Stap 1 – Twilio-account maken (± 10 min, vooraf)
-1. Ga naar **twilio.com/try-twilio** en maak een gratis account (je krijgt startkrediet, ongeveer $15).
+1. Ga naar **twilio.com/try-twilio** en maak een gratis account. Volgens Twilio duurt een proefaccount **30 dagen**, met ongeveer **75 belminuten**.
 2. Bevestig **je eigen mobiele nummer** (dat moet: proefaccounts mogen alleen naar bevestigde nummers bellen).
 3. Klik in de Console op **"Get a phone number"** → je krijgt gratis een Amerikaans nummer.
 4. Op de startpagina van de Console staan je **Account SID** en **Auth Token**. Houd die bij de hand.
@@ -58,8 +58,11 @@ Problemen? Kijk in `%LOCALAPPDATA%\Jarvis\jarvis.log`.
 - ElevenLabs (alleen als je dat kiest): je eigen tegoed.
 - Spraakherkenning, Microsoft-stem en tunnel: **gratis** (draait op je eigen pc).
 - Claude Code: je Pro-abonnement. Let op: zware klussen gebruiken je limiet.
-- Twilio-proefaccount: **gratis** zolang het startkrediet duurt (genoeg voor tientallen gesprekken). Een proefaccount laat eerst een kort Engels zinnetje horen en vraagt je op een toets te drukken; daarna praat Jarvis.
-  Daarna kost het ongeveer $1,15 per maand voor het nummer plus kosten per minuut (naar Nederlandse mobiele nummers waarschijnlijk 10–20 cent; controleer twilio.com/voice/pricing).
+- Twilio-proefaccount: **gratis**, maar volgens Twilio maar **30 dagen** en ongeveer **75 belminuten**. Een proefaccount laat eerst een kort Engels zinnetje horen; daarna praat Jarvis.
+- Daarna, per minuut naar een Nederlands 06-nummer (twilio.com/voice/pricing/nl, november 2026):
+  - vanaf een **Amerikaans** nummer: ± **$ 0,28 per minuut**. Duur!
+  - vanaf een **Europees/Nederlands** Twilio-nummer: ± **$ 0,02 per minuut**. Daarvoor vraagt Twilio je adresgegevens.
+- Daarom is Twilio bedoeld als **tijdelijke testoplossing**. Blijvend: een 4G-module met een Lebara-simkaart (zie IDEEEN.md).
 
 ## Opnieuw installeren of bijwerken
 Draai de installer gewoon opnieuw: je instellingen blijven bewaard.
